@@ -18,7 +18,7 @@ using S1MAPI.Gltf;
 using S1MAPI.Utils;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(ThorHammer.Core), "Mjolnir", "1.0.2", "hdlmrell", null)]
+[assembly: MelonInfo(typeof(ThorHammer.Core), "Mjolnir", "1.0.3", "hdlmrell", null)]
 [assembly: MelonGame("TVGS", "Schedule I")]
 
 namespace ThorHammer;

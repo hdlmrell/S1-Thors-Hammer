@@ -1,0 +1,23 @@
+Copyright (c) 2025 hdlmrell. All rights reserved.
+
+This repository and its contents — including all source code, 3D models,
+textures, and other assets — are the intellectual property of hdlmrell.
+
+PERMITTED:
+
+  - View, read, and study any source code in this repository.
+  - Learn from the code and apply the concepts in your own work.
+
+NOT PERMITTED:
+
+  - Copy or redistribute this repository or substantial portions of
+    its code, in source or compiled form.
+  - Use this code as a base for a Thor's Hammer mod for Schedule I.
+    You are welcome to build one — write your own code.
+  - Extract, reuse, or redistribute the 3D model (ThorHammer.glb)
+    or any other bundled assets for any purpose.
+  - Sell or sublicense any part of this project.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR
+OTHER LIABILITY ARISING FROM THE USE OF THIS SOFTWARE.
