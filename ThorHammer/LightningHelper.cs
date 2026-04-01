@@ -15,8 +15,8 @@ using UnityEngine;
 namespace ThorHammer;
 
 /// <summary>
-/// Lightning effect helpers. Kept in a non-injected type so the IEnumerator
-/// coroutine does not crash Il2CppInterop during type registration.
+/// Lightning effect helpers using the game's real lightning VFX.
+/// Clones the ThunderController VFX so it works without setting weather to heavy rain.
 /// </summary>
 internal static class LightningHelper
 {
@@ -26,12 +26,76 @@ internal static class LightningHelper
     /// <summary>Clears the electrify effect from an NPC after a delay.</summary>
     internal static IEnumerator ClearElectrifyCoroutine(NPC npc)
     {
-        yield return new WaitForSeconds(4f);
+        yield return new WaitForSeconds(Core.ElectrifyDuration);
         if (npc != null && npc.Avatar != null)
             Electrifying.ClearFromAvatar(npc.Avatar);
     }
 
-    /// <summary>Strikes the game's real lightning VFX at the given position.</summary>
+    /// <summary>Shoots a lightning bolt from the hammer to the target (not from sky).</summary>
+    internal static void ShootBoltFromTo(Vector3 from, Vector3 to)
+    {
+        var go = new GameObject("ThorLightningBolt");
+        var lr = go.AddComponent<LineRenderer>();
+        lr.positionCount = 0;
+        lr.useWorldSpace = true;
+
+        var shader = Shader.Find("Particles/Additive");
+        if (shader == null) shader = Shader.Find("Sprites/Default");
+        var mat = new Material(shader);
+        mat.color = new Color(0.85f, 0.95f, 1f, 1f);
+        if (mat.HasProperty("_EmissionColor"))
+            mat.SetColor("_EmissionColor", new Color(0.6f, 0.85f, 1f, 1f));
+        lr.material = mat;
+        lr.startWidth = 0.1f;
+        lr.endWidth = 0.025f;
+        lr.startColor = new Color(0.95f, 0.98f, 1f, 1f);
+        lr.endColor = new Color(0.5f, 0.75f, 1f, 0.8f);
+
+        int segments = 36;
+        var points = new Vector3[segments + 1];
+        var dir = to - from;
+        float len = dir.magnitude;
+        dir.Normalize();
+        var right = Vector3.Cross(dir, Vector3.up).normalized;
+        if (right.sqrMagnitude < 0.01f) right = Vector3.Cross(dir, Vector3.forward).normalized;
+        var up = Vector3.Cross(right, dir).normalized;
+
+        for (int i = 0; i <= segments; i++)
+        {
+            float t = (float)i / segments;
+            Vector3 basePt = from + dir * (t * len);
+            if (i > 0 && i < segments)
+            {
+                float jitter = (UnityEngine.Random.value - 0.5f) * 0.06f * len;
+                float jitter2 = (UnityEngine.Random.value - 0.5f) * 0.06f * len;
+                basePt += right * jitter + up * jitter2;
+            }
+            points[i] = basePt;
+        }
+        points[0] = from;
+        points[segments] = to;
+
+        lr.positionCount = segments + 1;
+        lr.SetPositions(points);
+
+        var light = go.AddComponent<Light>();
+        light.type = LightType.Point;
+        light.color = new Color(0.85f, 0.95f, 1f);
+        light.intensity = 2f;
+        light.range = len * 0.5f;
+        light.renderMode = LightRenderMode.ForceVertex;
+
+        MelonCoroutines.Start(DestroyAfter(go, 0.18f));
+    }
+
+    private static IEnumerator DestroyAfter(UnityEngine.GameObject go, float delay)
+    {
+        yield return new WaitForSeconds(delay);
+        if (go != null)
+            UnityEngine.Object.Destroy(go);
+    }
+
+    /// <summary>Strikes the game's real lightning VFX at the given position. Works without heavy rain.</summary>
     internal static void StrikeLightning(Vector3 position)
     {
         EnsureVFX();
@@ -51,7 +115,6 @@ internal static class LightningHelper
         if (_searched) return;
         _searched = true;
 
-        // Search all ThunderControllers including inactive/dormant weather volumes
         var all = Resources.FindObjectsOfTypeAll<ThunderController>();
         ThunderController tc = all.Length > 0 ? all[0] : null;
 
@@ -61,9 +124,6 @@ internal static class LightningHelper
             return;
         }
 
-        // Find the original Lightning VFXEffectHandler.
-        // _lightningEffect is null when Awake() hasn't run (no storm active),
-        // so also search the serialized visualEffects list.
         VFXEffectHandler original = null;
 #if IL2CPP
         original = tc._lightningEffect;
@@ -106,8 +166,6 @@ internal static class LightningHelper
             return;
         }
 
-        // Clone into a standalone active hierarchy so Activate() actually renders.
-        // The original sits under ThunderController which is inactive when there's no storm.
         var clone = UnityEngine.Object.Instantiate(original.gameObject);
         clone.name = "ThorLightningVFX";
         clone.SetActive(true);
@@ -117,7 +175,7 @@ internal static class LightningHelper
         if (_lightningVFX != null)
         {
             _lightningVFX.Deactivate();
-            Melon<Core>.Logger.Msg("Cloned game lightning VFX for ThorHammer.");
+            Melon<Core>.Logger.Msg("Cloned game lightning VFX for ThorHammer (works without heavy rain).");
         }
         else
         {

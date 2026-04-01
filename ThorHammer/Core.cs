@@ -10,6 +10,7 @@ using ScheduleOne.Persistence;
 using System;
 using System.IO;
 using System.Reflection;
+using HarmonyLib;
 using MelonLoader;
 using MelonLoader.Utils;
 using S1API.Items;
@@ -40,19 +41,25 @@ public class Core : MelonMod
 
     // ── Controls ──
 
-    /// <summary>The configured key for summoning lightning from the hammer.</summary>
+    /// <summary>The configured key: hold to charge, tap when charged to zap target.</summary>
     public static KeyCode LightningKey { get; private set; } = KeyCode.X;
+
+    /// <summary>Duration the hammer stays charged after pressing the charge key (seconds).</summary>
+    public static float ChargeDuration { get; private set; } = 30f;
+
+    /// <summary>Seconds to hold the charge key before the hammer becomes charged.</summary>
+    public static float ChargeHoldDuration { get; private set; } = 3f;
 
     // ── Combat ──
 
-    /// <summary>Damage dealt by a melee swing.</summary>
-    public static float MeleeDamage { get; private set; } = 25f;
+    /// <summary>Damage dealt by a melee swing (150% when charged).</summary>
+    public static float MeleeDamage { get; private set; } = 75f;
 
     /// <summary>Impact force of a melee swing.</summary>
     public static float MeleeForce { get; private set; } = 350f;
 
-    /// <summary>Damage dealt when the thrown hammer hits.</summary>
-    public static float ThrowDamage { get; private set; } = 100f;
+    /// <summary>Damage dealt when the thrown hammer hits (150% when charged).</summary>
+    public static float ThrowDamage { get; private set; } = 50f;
 
     /// <summary>Impact force of the thrown hammer.</summary>
     public static float ThrowForce { get; private set; } = 600f;
@@ -66,10 +73,25 @@ public class Core : MelonMod
     /// <summary>Radius around lightning strikes that causes nearby NPCs to panic (0 to disable).</summary>
     public static float LightningPanicRadius { get; private set; } = 25f;
 
+    /// <summary>Damage multiplier when melee is charged (e.g. 1.5 = 150%).</summary>
+    public static float ChargedMeleeMultiplier { get; private set; } = 1.5f;
+
+    /// <summary>Damage multiplier when throw is charged (e.g. 1.5 = 150%).</summary>
+    public static float ChargedThrowMultiplier { get; private set; } = 1.5f;
+
+    /// <summary>Max range of the lightning zap.</summary>
+    public static float LightningZapRange { get; private set; } = 21f;
+
+    /// <summary>Seconds the electrify effect lasts on NPCs.</summary>
+    public static float ElectrifyDuration { get; private set; } = 4f;
+
     // ── Mechanics ──
 
     /// <summary>How fast the player flies while holding Space during a charged wind-up.</summary>
-    public static float FlightSpeed { get; private set; } = 18f;
+    public static float FlightSpeed { get; private set; } = 24f;
+
+    /// <summary>Seconds of flight per second of charge (e.g. 2 = 1s charge gives 2s flight).</summary>
+    public static float FlightMomentumMultiplier { get; private set; } = 2f;
 
     /// <summary>How fast the thrown hammer travels.</summary>
     public static float ThrowSpeed { get; private set; } = 40f;
@@ -77,8 +99,14 @@ public class Core : MelonMod
     /// <summary>Maximum distance the hammer can travel before returning.</summary>
     public static float MaxThrowRange { get; private set; } = 30f;
 
-    /// <summary>Seconds to fully charge the hammer spin (minimum 0.1).</summary>
-    public static float WindUpDuration { get; private set; } = 1.2f;
+    /// <summary>Seconds to fully charge the hammer spin (minimum 0.1). 1s = 1.5s flight, 5s = 7.5s.</summary>
+    public static float WindUpDuration { get; private set; } = 1f;
+
+    /// <summary>Minimum landing speed to trigger ground slam damage and effects.</summary>
+    public static float FlightImpactMinSpeed { get; private set; } = 18f;
+
+    /// <summary>Multiplier for ground slam strength (damage, force, radius, VFX). 1 = default.</summary>
+    public static float FlightImpactMultiplier { get; private set; } = 1f;
 
     // ── Stamina ──
 
@@ -86,7 +114,7 @@ public class Core : MelonMod
     public static bool StaminaEnabled { get; private set; } = true;
 
     /// <summary>Stamina consumed per melee swing.</summary>
-    public static float SwingStaminaCost { get; private set; } = 15f;
+    public static float SwingStaminaCost { get; private set; } = 10f;
 
     /// <summary>Stamina consumed per lightning zap.</summary>
     public static float LightningStaminaCost { get; private set; } = 20f;
@@ -94,8 +122,7 @@ public class Core : MelonMod
     /// <summary>Stamina consumed per second while winding up.</summary>
     public static float WindUpStaminaRate { get; private set; } = 20f;
 
-    /// <summary>Stamina consumed per second while flying.</summary>
-    public static float FlightStaminaRate { get; private set; } = 15f;
+    private const string EmbeddedIconResource = "ThorHammer.Resources.ThorHammer.png";
 
     private static string IconPath =>
         Path.Combine(MelonEnvironment.UserDataDirectory, "S1API", "Icons", "ThorHammer.png");
@@ -107,10 +134,12 @@ public class Core : MelonMod
         ClassInjector.RegisterTypeInIl2Cpp<HammerEquippable>();
 #endif
 
+        HarmonyInstance.PatchAll(Assembly.GetExecutingAssembly());
+
         // ── Controls ──
         var controls = MelonPreferences.CreateCategory("Mjolnir - Controls", "Mjolnir Controls");
-        var savedKey = BindEntry(controls, "LightningKey", "X", "Lightning Key",
-            "Key to summon lightning from the hammer (e.g. X, F, G, T)",
+        var savedKey = BindEntry(controls, "LightningKey", "X", "Lightning / Charge Key",
+            "Hold to charge the hammer. When charged, tap to zap target with lightning.",
             (_, v) =>
             {
                 if (Enum.TryParse<KeyCode>(v, true, out var k)) LightningKey = k;
@@ -118,6 +147,12 @@ public class Core : MelonMod
             });
         if (Enum.TryParse<KeyCode>(savedKey, true, out var initial)) LightningKey = initial;
         else LoggerInstance.Warning($"Invalid lightning key '{savedKey}', defaulting to X");
+
+        ChargeDuration = BindEntry(controls, "ChargeDuration", 30f, "Charge Duration",
+            "Seconds the hammer stays charged after pressing the charge key", (_, v) => ChargeDuration = v);
+
+        ChargeHoldDuration = BindEntry(controls, "ChargeHoldDuration", 3f, "Charge Hold Duration",
+            "Seconds to hold the charge key before the hammer becomes charged", (_, v) => ChargeHoldDuration = v);
 
         // ── Shop ──
         var shop = MelonPreferences.CreateCategory("Mjolnir - Shop", "Mjolnir Shop");
@@ -131,12 +166,12 @@ public class Core : MelonMod
 
         // ── Combat ──
         var combat = MelonPreferences.CreateCategory("Mjolnir - Combat", "Mjolnir Combat");
-        MeleeDamage = BindEntry(combat, "MeleeDamage", 25f, "Melee Damage",
+        MeleeDamage = BindEntry(combat, "MeleeDamage", 75f, "Melee Damage",
             "Damage dealt by a melee swing", (_, v) => MeleeDamage = v);
         MeleeForce = BindEntry(combat, "MeleeForce", 350f, "Melee Force",
             "Impact force of a melee swing", (_, v) => MeleeForce = v);
-        ThrowDamage = BindEntry(combat, "ThrowDamage", 100f, "Throw Damage",
-            "Damage dealt when the thrown hammer hits", (_, v) => ThrowDamage = v);
+        ThrowDamage = BindEntry(combat, "ThrowDamage", 50f, "Throw Damage",
+            "Damage dealt when the thrown hammer hits (150% when charged)", (_, v) => ThrowDamage = v);
         ThrowForce = BindEntry(combat, "ThrowForce", 600f, "Throw Force",
             "Impact force of the thrown hammer", (_, v) => ThrowForce = v);
         LightningDamage = BindEntry(combat, "LightningDamage", 80f, "Lightning Damage",
@@ -146,18 +181,32 @@ public class Core : MelonMod
         LightningPanicRadius = BindEntry(combat, "LightningPanicRadius", 25f, "Lightning Panic Radius",
             "Radius around lightning strikes that causes nearby NPCs to panic (0 to disable)",
             (_, v) => LightningPanicRadius = v);
+        ChargedMeleeMultiplier = BindEntry(combat, "ChargedMeleeMultiplier", 1.5f, "Charged Melee Multiplier",
+            "Damage multiplier when melee is charged (e.g. 1.5 = 150%)", (_, v) => ChargedMeleeMultiplier = v);
+        ChargedThrowMultiplier = BindEntry(combat, "ChargedThrowMultiplier", 1.5f, "Charged Throw Multiplier",
+            "Damage multiplier when throw is charged (e.g. 1.5 = 150%)", (_, v) => ChargedThrowMultiplier = v);
+        LightningZapRange = BindEntry(combat, "LightningZapRange", 21f, "Lightning Zap Range",
+            "Max range of the lightning zap", (_, v) => LightningZapRange = v);
+        ElectrifyDuration = BindEntry(combat, "ElectrifyDuration", 4f, "Electrify Duration",
+            "Seconds the electrify effect lasts on NPCs", (_, v) => ElectrifyDuration = v);
 
         // ── Mechanics ──
         var mechanics = MelonPreferences.CreateCategory("Mjolnir - Mechanics", "Mjolnir Mechanics");
         FlightSpeed = BindEntry(mechanics, "FlightSpeed", 18f, "Flight Speed",
             "How fast you fly while holding Space during a charged wind-up", (_, v) => FlightSpeed = v);
+        FlightMomentumMultiplier = BindEntry(mechanics, "FlightMomentumMultiplier", 2f, "Flight Momentum Multiplier",
+            "Seconds of flight per second of charge (e.g. 2 = 1s charge gives 2s flight)", (_, v) => FlightMomentumMultiplier = v);
         ThrowSpeed = BindEntry(mechanics, "ThrowSpeed", 40f, "Throw Speed",
             "How fast the thrown hammer travels", (_, v) => ThrowSpeed = v);
         MaxThrowRange = BindEntry(mechanics, "MaxThrowRange", 30f, "Max Throw Range",
             "Maximum distance the hammer can travel before returning", (_, v) => MaxThrowRange = v);
-        WindUpDuration = Math.Max(0.1f, BindEntry(mechanics, "WindUpDuration", 1.2f, "Wind-Up Duration",
+        WindUpDuration = Math.Max(0.1f, BindEntry(mechanics, "WindUpDuration", 1f, "Wind-Up Duration",
             "Seconds to fully charge the hammer spin (minimum 0.1)",
             (_, v) => WindUpDuration = Math.Max(0.1f, v)));
+        FlightImpactMinSpeed = BindEntry(mechanics, "FlightImpactMinSpeed", 18f, "Flight Impact Min Speed",
+            "Minimum landing speed to trigger ground slam damage and effects", (_, v) => FlightImpactMinSpeed = v);
+        FlightImpactMultiplier = BindEntry(mechanics, "FlightImpactMultiplier", 1f, "Flight Impact Multiplier",
+            "Multiplier for ground slam strength (damage, force, radius, VFX). 1 = default", (_, v) => FlightImpactMultiplier = v);
 
         // ── Stamina ──
         var stamina = MelonPreferences.CreateCategory("Mjolnir - Stamina", "Mjolnir Stamina");
@@ -169,8 +218,6 @@ public class Core : MelonMod
             "Stamina consumed per lightning zap", (_, v) => LightningStaminaCost = v);
         WindUpStaminaRate = BindEntry(stamina, "WindUpStaminaRate", 20f, "Wind-Up Stamina Rate",
             "Stamina consumed per second while winding up", (_, v) => WindUpStaminaRate = v);
-        FlightStaminaRate = BindEntry(stamina, "FlightStaminaRate", 15f, "Flight Stamina Rate",
-            "Stamina consumed per second while flying", (_, v) => FlightStaminaRate = v);
 
         LoggerInstance.Msg("Initialized.");
     }
@@ -245,9 +292,29 @@ public class Core : MelonMod
             return;
         }
 
-        string path = IconPath;
+        // 1. Try embedded resource (place ThorHammer.png in Resources/ folder)
+        byte[] embeddedPng = EmbeddedResourceLoader.LoadBytes(EmbeddedIconResource, Assembly.GetExecutingAssembly());
+        if (embeddedPng != null && embeddedPng.Length > 0)
+        {
+            try
+            {
+                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                if (tex.LoadImage(embeddedPng))
+                {
+                    _cachedIcon = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+                    _cachedIcon.name = "ThorHammerIcon";
+                    _hammerDef.Icon = _cachedIcon;
+                    LoggerInstance.Msg("Loaded hammer icon from embedded resource.");
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                LoggerInstance.Warning($"Failed to load embedded icon: {ex.Message}");
+            }
+        }
 
-        // Try loading from disk cache
+        string path = IconPath;
         if (File.Exists(path))
         {
             try
