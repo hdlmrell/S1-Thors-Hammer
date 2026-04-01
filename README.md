@@ -34,7 +34,7 @@ Install [OTC Loader](https://www.nexusmods.com/schedule1/mods/1698) (optional, r
 ### Requirements
 
 - [MelonLoader 0.7.2+](https://github.com/LavaGang/MelonLoader)
-- [S1API Forked 1.3.0+](https://thunderstore.io/c/schedule-i/p/ifBars/S1API_Forked/) ([NexusMods](https://www.nexusmods.com/schedule1/mods/1194))
+- [S1API Forked 3.0.0+](https://thunderstore.io/c/schedule-i/p/ifBars/S1API_Forked/) ([NexusMods](https://www.nexusmods.com/schedule1/mods/1194))
 - [S1MAPI 1.0.0+](https://thunderstore.io/c/schedule-i/p/ifBars/S1MAPI/) ([NexusMods](https://www.nexusmods.com/schedule1/mods/1447))
 - [OTC Loader](https://www.nexusmods.com/schedule1/mods/1698) (optional, recommended) — auto-detects your game branch and disables incompatible DLLs
 
